@@ -23,10 +23,11 @@ SHOT_DIR = BASE_DIR / "screenshots"
 ALERT_LOG = BASE_DIR / "alerts.log"
 DEBUG_HTML = BASE_DIR / "debug_latest.html"
 
-# 챌린저스처럼 모바일 화면 크기로 캡처
-MOBILE_VIEWPORT = {"width": 390, "height": 844}
+# 챌린저스처럼 모바일 화면 크기로 캡처 (세로를 넉넉히 잡아서 카드 전체가 잘리지 않게 함)
+MOBILE_VIEWPORT = {"width": 390, "height": 1000}
 MOBILE_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
              "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
+HEADER_OFFSET = 230  # 상단 고정 헤더(로고/검색창/탭바)가 가리는 높이만큼 여유를 둠
 
 
 def load_config():
@@ -148,11 +149,13 @@ def capture_rank_area(page, el_by_id, item_id, shot_path):
     try:
         if el:
             el.scroll_into_view_if_needed(timeout=5000)
-            # 화면 정중앙 즈음에 오도록 살짝 더 스크롤 보정
+            # 카드 "위쪽"이 고정 헤더 바로 아래에 오도록 정렬 (가운데 정렬 X)
+            # -> 카드 전체(이미지+브랜드명+상품명+가격)가 화면 아래쪽에 다 담기게 함
             page.evaluate(
-                "(el) => { const r = el.getBoundingClientRect();"
-                " window.scrollBy(0, r.top - window.innerHeight/2 + r.height/2); }",
-                el
+                "(args) => { const el = args.el; const offset = args.offset;"
+                " const r = el.getBoundingClientRect();"
+                " window.scrollBy(0, r.top - offset); }",
+                {"el": el, "offset": HEADER_OFFSET}
             )
         page.wait_for_timeout(1200)  # 주변 이미지 로딩 대기
         try:
