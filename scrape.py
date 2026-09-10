@@ -264,12 +264,6 @@ def scrape_once(debug=True):
 
                 if not matches:
                     print(f"  상품을 찾지 못했어요.")
-                    if product.get("screenshot", True):
-                        shot_path = shot_dir_for(slug) / f"{target_id or 'unknown'}_{ts}_notfound.png"
-                        try:
-                            page.screenshot(path=str(shot_path), full_page=False)
-                        except Exception as e:
-                            print("스크린샷 저장 실패:", e)
                     row = [ts, prod_name, target_id, "", "", "", category["url"], "not_found"]
                 else:
                     m = matches[0]
