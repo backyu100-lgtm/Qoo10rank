@@ -1,13 +1,21 @@
 {
-  "default_category_url": "https://www.qoo10.jp/gmkt.inc/Bestsellers/?g=2",
   "alert_threshold": 5,
+  "screenshot_retention_days": 14,
+
+  "categories": [
+    { "name": "総合", "slug": "all", "url": "https://www.qoo10.jp/gmkt.inc/Bestsellers/?g=0" },
+    { "name": "ビューティー", "slug": "beauty", "url": "https://www.qoo10.jp/gmkt.inc/Bestsellers/?g=2" },
+    { "name": "スキンケア", "slug": "skincare", "url": "https://www.qoo10.jp/gmkt.inc/Bestsellers/?g=2", "click_path": ["スキンケア"] },
+    { "name": "基礎化粧品", "slug": "basic-cosmetics", "url": "https://www.qoo10.jp/gmkt.inc/Bestsellers/?g=2", "click_path": ["スキンケア", "基礎化粧品"] }
+  ],
+
   "products": [
     {
-      "name": "내 추적 상품",
-      "target_id": "945527932",
-      "keyword": "夕暮れのオータムファンタジーセット",
-      "category_url": "https://www.qoo10.jp/gmkt.inc/Bestsellers/?g=2",
-      "screenshot": true
+      "name": "【予約受付キャンペーン】リトゥジェルECM クリーム 20g",
+      "target_id": "1202012223",
+      "keyword": "リトゥジェルECM",
+      "screenshot": true,
+      "track_categories": ["総合", "ビューティー", "スキンケア", "基礎化粧品"]
     }
   ]
 }
