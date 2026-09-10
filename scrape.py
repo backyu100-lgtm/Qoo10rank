@@ -2,12 +2,11 @@
 Qoo10 재팬 랭킹 자동 추적 스크립트
 
 - config.json에 등록한 상품의 현재 순위를 rank_log.csv에 기록
-- 매번 스크린샷을 screenshots/ 폴더에 저장 (상품을 찾았는지 여부와 무관하게 항상 저장)
+- 상품을 찾으면, 그 상품이 보이는 위치로 스크롤해서 모바일 화면 크기로
+  "그 주변만" 캡처 (전체 페이지를 다 찍지 않음 -> 길이도 짧고, 로딩도 다 된 상태)
 - 순위가 급하게 오르내리면 alerts.log에 남김
 - 상품을 못 찾은 경우에도 rank_log.csv에 "not_found" 상태로 반드시 기록을 남김
-  (그래야 매 실행마다 파일이 바뀌어서 GitHub에 항상 커밋됨)
 - debug_latest.html에 마지막으로 읽은 페이지 원본을 덮어써서 저장
-  (상품을 계속 못 찾을 때, 실제로 어떤 화면을 읽었는지 확인하는 용도)
 """
 import json
 import csv
@@ -23,6 +22,11 @@ LOG_PATH = BASE_DIR / "rank_log.csv"
 SHOT_DIR = BASE_DIR / "screenshots"
 ALERT_LOG = BASE_DIR / "alerts.log"
 DEBUG_HTML = BASE_DIR / "debug_latest.html"
+
+# 챌린저스처럼 모바일 화면 크기로 캡처
+MOBILE_VIEWPORT = {"width": 390, "height": 844}
+MOBILE_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+             "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
 
 
 def load_config():
@@ -60,21 +64,32 @@ def load_more(page, max_scrolls=15):
         if count == last_count:
             break
         last_count = count
+    # 캡처 전에 맨 위로 되돌려둔다 (특정 상품 위치로 다시 스크롤할 것이므로)
+    page.evaluate("window.scrollTo(0, 0)")
+    page.wait_for_timeout(300)
 
 
 def parse_ranking(page):
+    """
+    순위 목록을 추출하면서, 나중에 스크린샷 위치를 잡을 때 쓸 수 있도록
+    각 item_id에 해당하는 앵커 엘리먼트도 함께 보관합니다.
+    """
     anchors = page.query_selector_all('a[href*="/item/"], a[href*="goodscode="], a[href*="/g/"]')
     seen_ids = set()
     items = []
+    el_by_id = {}
     rank = 0
+
     for a in anchors:
         href = a.get_attribute("href") or ""
         item_id = extract_item_id(href)
         if not item_id or item_id in seen_ids:
             continue
+
         title = (a.get_attribute("title") or a.inner_text() or "").strip()
         seen_ids.add(item_id)
         rank += 1
+
         review_count = None
         try:
             container = a.evaluate_handle(
@@ -86,9 +101,11 @@ def parse_ranking(page):
             if m:
                 review_count = m.group(1)
         except Exception:
-            pass
+            el = None
+
         items.append({"rank": rank, "item_id": item_id, "title": title, "url": href, "reviews": review_count})
-    return items
+        el_by_id[item_id] = el if el else a
+    return items, el_by_id
 
 
 def find_matches(items, target_id, keyword):
@@ -99,6 +116,33 @@ def find_matches(items, target_id, keyword):
         if id_match or kw_match:
             matches.append(it)
     return matches
+
+
+def capture_rank_area(page, el_by_id, item_id, shot_path):
+    """
+    상품이 보이는 위치로 스크롤해서, 모바일 화면 하나 분량만 캡처합니다
+    (전체 페이지가 아니라 그 상품 근처만).
+    """
+    el = el_by_id.get(item_id)
+    try:
+        if el:
+            el.scroll_into_view_if_needed(timeout=5000)
+            # 화면 정중앙 즈음에 오도록 살짝 더 스크롤 보정
+            page.evaluate(
+                "(el) => { const r = el.getBoundingClientRect();"
+                " window.scrollBy(0, r.top - window.innerHeight/2 + r.height/2); }",
+                el
+            )
+        page.wait_for_timeout(1200)  # 주변 이미지 로딩 대기
+        try:
+            page.wait_for_load_state("networkidle", timeout=4000)
+        except Exception:
+            pass
+        page.screenshot(path=str(shot_path), full_page=False)
+        return True
+    except Exception as e:
+        print("스크린샷 저장 실패:", e)
+        return False
 
 
 def append_log(rows):
@@ -138,8 +182,11 @@ def scrape_once(debug=True):
     with sync_playwright() as p:
         browser = p.chromium.launch(args=["--disable-blink-features=AutomationControlled"])
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 2000},
+            user_agent=MOBILE_UA,
+            viewport=MOBILE_VIEWPORT,
+            device_scale_factor=2,
+            is_mobile=True,
+            has_touch=True,
             locale="ja-JP",
         )
         page = context.new_page()
@@ -155,28 +202,32 @@ def scrape_once(debug=True):
             page.wait_for_timeout(2000)
             load_more(page)
 
-            items = parse_ranking(page)
+            items, el_by_id = parse_ranking(page)
             print(f"[{prod_name}] 페이지에서 총 {len(items)}개 상품을 읽었어요.")
 
             if debug:
                 DEBUG_HTML.write_text(page.content(), encoding="utf-8")
 
-            if product.get("screenshot", True):
-                file_key = target_id or "screenshot"
-                shot_path = SHOT_DIR / f"{file_key}_{ts}.png"
-                try:
-                    page.screenshot(path=str(shot_path), full_page=True)
-                except Exception as e:
-                    print("스크린샷 저장 실패:", e)
-
             matches = find_matches(items, target_id, keyword)
+
             if not matches:
                 print(f"[{prod_name}] (ID: {target_id} / 키워드: {keyword}) 랭킹 페이지에서 상품을 찾지 못했어요.")
+                if product.get("screenshot", True):
+                    # 못 찾았을 때는 대신 페이지 맨 위 화면이라도 남겨서 상태를 확인할 수 있게 함
+                    shot_path = SHOT_DIR / f"{target_id or 'unknown'}_{ts}_notfound.png"
+                    try:
+                        page.screenshot(path=str(shot_path), full_page=False)
+                    except Exception as e:
+                        print("스크린샷 저장 실패:", e)
                 rows_to_log.append([ts, prod_name, target_id, "", "", "", url, "not_found"])
                 continue
 
             m = matches[0]
             print(f"[{prod_name}] 현재 {m['rank']}위 발견! - {m['title'][:40]}")
+
+            if product.get("screenshot", True):
+                shot_path = SHOT_DIR / f"{m['item_id']}_{ts}.png"
+                capture_rank_area(page, el_by_id, m["item_id"], shot_path)
 
             prev = last_found_rank(target_id or prod_name)
             if prev and prev.get("rank"):
@@ -185,7 +236,8 @@ def scrape_once(debug=True):
                     direction = "상승" if delta > 0 else "하락"
                     log_alert(f"{prod_name}: {abs(delta)}계단 {direction} ({prev['rank']}위 -> {m['rank']}위)")
 
-            rows_to_log.append([ts, prod_name, m["item_id"], m["rank"], m["reviews"] or "", m["title"], m["url"], "found"])
+            canonical_url = f"https://www.qoo10.jp/g/{m['item_id']}"
+            rows_to_log.append([ts, prod_name, m["item_id"], m["rank"], m["reviews"] or "", m["title"], canonical_url, "found"])
 
         append_log(rows_to_log)
         browser.close()
