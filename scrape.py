@@ -46,6 +46,27 @@ def extract_item_id(url_or_str):
     return url_or_str.strip()
 
 
+def close_overlays(page):
+    """
+    모바일 화면에서 카테고리 드롭다운/팝업 등이 열린 채로 시작되는 경우가 있어서,
+    스크린샷을 찍기 전에 미리 닫아둡니다. 없으면 그냥 넘어갑니다.
+    """
+    for text in ["閉じる", "닫기", "close", "Close", "×"]:
+        try:
+            btn = page.get_by_text(text, exact=False)
+            if btn.count() > 0 and btn.first.is_visible():
+                btn.first.click(timeout=1000)
+                page.wait_for_timeout(400)
+        except Exception:
+            pass
+    # 그래도 안 닫히면, 카테고리 패널 바깥(본문 쪽)을 한 번 클릭해서 닫아본다
+    try:
+        page.mouse.click(10, 10)
+        page.wait_for_timeout(300)
+    except Exception:
+        pass
+
+
 def load_more(page, max_scrolls=15):
     """스크롤하면서 하위 순위 상품까지 최대한 로딩시킵니다."""
     last_count = -1
@@ -138,6 +159,7 @@ def capture_rank_area(page, el_by_id, item_id, shot_path):
             page.wait_for_load_state("networkidle", timeout=4000)
         except Exception:
             pass
+        close_overlays(page)
         page.screenshot(path=str(shot_path), full_page=False)
         return True
     except Exception as e:
@@ -200,6 +222,7 @@ def scrape_once(debug=True):
 
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(2000)
+            close_overlays(page)
             load_more(page)
 
             items, el_by_id = parse_ranking(page)
