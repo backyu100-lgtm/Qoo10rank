@@ -2,7 +2,7 @@ name: Qoo10 Rank Tracker
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '0 * * * *'   # 매시 정각 (UTC 기준, 1시간마다)
   workflow_dispatch: {}
 
 jobs:
@@ -25,21 +25,11 @@ jobs:
       - name: 랭킹 체크인 실행
         run: python scrape.py
 
-      - name: 생성된 파일 확인 (디버그)
-        run: |
-          echo "--- 현재 폴더 구조 ---"
-          ls -la
-          echo "--- rank_log.csv 내용 (있다면) ---"
-          cat rank_log.csv 2>/dev/null || echo "rank_log.csv 없음"
-          echo "--- screenshots 폴더 (있다면) ---"
-          ls -la screenshots 2>/dev/null || echo "screenshots 폴더 없음"
-
       - name: 결과 커밋
         run: |
           git config user.name "qoo10-tracker-bot"
           git config user.email "actions@users.noreply.github.com"
           git add -A
-          echo "--- git status ---"
           git status
           git commit -m "rank check-in $(date -u +'%Y-%m-%d %H:%M UTC')" || echo "커밋할 변경사항이 없었어요"
           git push
