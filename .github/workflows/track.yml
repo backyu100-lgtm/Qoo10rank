@@ -1,0 +1,34 @@
+name: Qoo10 Rank Tracker
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 의존성 설치
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: 랭킹 체크인 실행
+        run: python scrape.py
+
+      - name: 결과 커밋
+        run: |
+          git config user.name "qoo10-tracker-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add rank_log.csv screenshots/ alerts.log debug_latest.html 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "rank check-in $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
