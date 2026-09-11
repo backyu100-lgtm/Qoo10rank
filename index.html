@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Qoo10 재팬 랭킹 트래커</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  :root{
+    --ink-900:#12141B; --ink-800:#1A1D27; --ink-750:#1F2330; --ink-700:#262B3A; --ink-600:#343B4E;
+    --text-hi:#F2F3F7; --text-lo:#9096A8; --text-faint:#5C6275;
+    --accent-up:#FF4757; --accent-up-bg:rgba(255,71,87,0.12);
+    --accent-down:#4C8DFF; --accent-down-bg:rgba(76,141,255,0.12);
+    --accent-alert:#FFB020; --accent-alert-bg:rgba(255,176,32,0.14);
+    --focus-ring:#7C9CFF;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{background:var(--ink-900);color:var(--text-hi);font-family:'Space Grotesk',sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;}
+  .mono{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;}
+  a{color:inherit;}
+  button{font-family:inherit;}
+  :focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;}
+  .shell{max-width:960px;margin:0 auto;padding:28px 20px 80px;}
+
+  .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:8px;flex-wrap:wrap;}
+  .brand h1{font-size:22px;font-weight:700;margin:0 0 4px;letter-spacing:-0.01em;}
+  .brand p{margin:0;color:var(--text-lo);font-size:13.5px;}
+  .bestseller-link{display:inline-flex;align-items:center;gap:7px;background:var(--ink-800);border:1px solid var(--ink-700);color:var(--text-hi);text-decoration:none;font-size:13.5px;font-weight:500;padding:9px 14px;border-radius:9px;white-space:nowrap;transition:border-color .15s ease, background .15s ease;}
+  .bestseller-link:hover{border-color:var(--ink-600);background:var(--ink-750);}
+  .bestseller-link svg{width:13px;height:13px;flex-shrink:0;}
+  .updated-note{color:var(--text-faint);font-size:12px;margin:0 0 22px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .refresh-btn{background:transparent;border:1px solid var(--ink-700);color:var(--text-lo);padding:4px 10px;border-radius:100px;font-size:11.5px;cursor:pointer;}
+  .refresh-btn:hover{color:var(--text-hi);border-color:var(--ink-600);}
+
+  .card{background:var(--ink-800);border:1px solid var(--ink-700);border-radius:18px;padding:22px 26px;margin-bottom:18px;}
+  .card h3{font-size:14px;font-weight:600;margin:0 0 14px;color:var(--text-hi);}
+  .card-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px;}
+  .card-head h3{margin:0;}
+
+  .tabbar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px;}
+  .tab{background:transparent;border:1px solid var(--ink-700);color:var(--text-lo);padding:8px 14px;border-radius:100px;font-size:13.5px;font-weight:500;cursor:pointer;transition:all .15s ease;}
+  .tab:hover{color:var(--text-hi);border-color:var(--ink-600);}
+  .tab.active{background:var(--text-hi);color:var(--ink-900);border-color:var(--text-hi);}
+
+  .state-msg{text-align:left;padding:40px 28px;background:var(--ink-800);border:1px solid var(--ink-700);border-radius:16px;color:var(--text-lo);font-size:14px;line-height:1.6;}
+
+  .alert-banner{display:none;align-items:center;gap:10px;background:var(--accent-alert-bg);border:1px solid rgba(255,176,32,0.35);color:var(--accent-alert);padding:12px 16px;border-radius:12px;font-size:13.5px;font-weight:600;margin-bottom:16px;}
+  .alert-banner.show{display:flex;}
+
+  .product-top{display:flex;gap:14px;align-items:flex-start;}
+  .product-thumb-ph{width:56px;height:56px;border-radius:12px;background:var(--ink-700);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:var(--text-faint);}
+  .product-info{flex:1;min-width:0;}
+  .product-name{margin:0 0 5px;font-size:15px;font-weight:600;line-height:1.4;}
+  .product-sub{margin:0;font-size:12.5px;color:var(--text-lo);}
+
+  .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:20px;}
+  .stat{background:var(--ink-900);border:1px solid var(--ink-700);border-radius:12px;padding:12px 14px;}
+  .stat-label{display:block;font-size:11.5px;color:var(--text-faint);margin-bottom:6px;}
+  .stat-value{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;}
+  .stat-value.up{color:var(--accent-up);} .stat-value.down{color:var(--accent-down);}
+  .stat-delta{display:inline-block;margin-left:6px;font-size:11px;font-weight:600;vertical-align:middle;}
+  .stat-delta.up{color:var(--accent-up);} .stat-delta.down{color:var(--accent-down);}
+
+  .range-tabs{display:flex;gap:6px;flex-wrap:wrap;}
+  .range-tab{background:transparent;border:1px solid var(--ink-700);color:var(--text-lo);padding:5px 11px;border-radius:100px;font-size:12px;font-weight:500;cursor:pointer;transition:all .15s ease;}
+  .range-tab:hover{color:var(--text-hi);border-color:var(--ink-600);}
+  .range-tab.active{background:var(--ink-700);color:var(--text-hi);border-color:var(--ink-600);}
+
+  .chart-empty,.history-empty{color:var(--text-faint);font-size:13px;padding:24px 0;text-align:center;}
+  svg.chart{width:100%;height:auto;display:block;}
+  .chart-line{fill:none;stroke:var(--accent-up);stroke-width:2;}
+  .chart-dot{fill:var(--ink-900);stroke:var(--accent-up);stroke-width:2;}
+  .chart-dot.latest{fill:var(--accent-up);}
+  .chart-grid{stroke:var(--ink-700);stroke-width:1;}
+  .chart-axis-label{fill:var(--text-faint);font-size:10px;font-family:'IBM Plex Mono',monospace;}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;color:var(--text-faint);font-weight:500;font-size:11.5px;padding:0 10px 10px;border-bottom:1px solid var(--ink-700);white-space:nowrap;}
+  td{padding:10px 10px;border-bottom:1px solid var(--ink-750);color:var(--text-hi);vertical-align:middle;}
+  tr:last-child td{border-bottom:none;}
+  .rank-cell{font-family:'IBM Plex Mono',monospace;font-weight:600;white-space:nowrap;}
+  .review-cell{color:var(--text-lo);font-family:'IBM Plex Mono',monospace;font-size:12px;}
+  .thumb-cell img{width:40px;height:40px;object-fit:cover;border-radius:8px;cursor:zoom-in;border:1px solid var(--ink-700);display:block;}
+  .thumb-cell span{color:var(--text-faint);font-size:12px;}
+  .alert-row{background:rgba(255,176,32,0.06);}
+
+  .settings-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  .field{display:flex;flex-direction:column;gap:6px;max-width:160px;}
+  .field label{font-size:12px;color:var(--text-lo);font-weight:500;}
+  .field input[type=number]{background:var(--ink-900);border:1px solid var(--ink-700);color:var(--text-hi);border-radius:9px;padding:10px 12px;font-size:14px;font-family:'IBM Plex Mono',monospace;width:100%;}
+  .field input:focus{border-color:var(--focus-ring);}
+  .btn-ghost{background:transparent;color:var(--text-lo);border:1px solid var(--ink-700);padding:10px 16px;border-radius:9px;font-size:13.5px;font-weight:500;cursor:pointer;}
+  .btn-ghost:hover{color:var(--text-hi);border-color:var(--ink-600);}
+  .settings-note{color:var(--text-faint);font-size:12px;margin:10px 0 0;line-height:1.5;}
+
+  .alert-list{display:flex;flex-direction:column;gap:8px;}
+  .alert-item{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:10px 12px;border-radius:10px;background:var(--accent-alert-bg);color:var(--accent-alert);font-weight:500;}
+  .alert-item .ts{color:var(--text-faint);font-weight:400;font-size:12px;white-space:nowrap;}
+
+  footer.hint{color:var(--text-faint);font-size:12px;text-align:center;margin-top:32px;line-height:1.6;}
+  @media (max-width:520px){.card{padding:18px;} .stats-grid{grid-template-columns:repeat(2,1fr);} .stat-value{font-size:17px;}}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <div class="topbar">
+    <div class="brand">
+      <h1>Qoo10 재팬 랭킹 트래커</h1>
+      <p>자동 체크인 데이터를 실시간으로 보여줘요 (읽기 전용 공개 페이지)</p>
+    </div>
+    <a class="bestseller-link" href="https://www.qoo10.jp/gmkt.inc/Bestsellers/?g=2" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>
+      베스트셀러 페이지 열기
+    </a>
+  </div>
+  <p class="updated-note"><span id="updatedText">불러오는 중...</span><button class="refresh-btn" onclick="loadAll()">새로고침</button></p>
+
+  <div id="loadingState" class="state-msg">데이터를 불러오는 중이에요...</div>
+  <div id="errorState" class="state-msg" style="display:none;"></div>
+
+  <div id="mainContent" style="display:none;">
+    <div id="tabbar" class="tabbar"></div>
+
+    <div class="card">
+      <div class="product-top">
+        <div id="thumbSlot"><div class="product-thumb-ph" id="thumbPh">?</div></div>
+        <div class="product-info">
+          <p class="product-name" id="productName">상품명</p>
+          <p class="product-sub" id="productSub">-</p>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat"><span class="stat-label">현재</span><span class="stat-value mono" id="statCurrent">–</span><span id="statCurrentDelta"></span></div>
+        <div class="stat"><span class="stat-label">평균</span><span class="stat-value mono" id="statAvg">–</span></div>
+        <div class="stat"><span class="stat-label">최고</span><span class="stat-value mono up" id="statBest">–</span></div>
+        <div class="stat"><span class="stat-label">최저</span><span class="stat-value mono down" id="statWorst">–</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>순위 추이</h3><div class="range-tabs" id="rangeTabs"></div></div>
+      <div id="chartWrap"></div>
+    </div>
+
+    <div class="card">
+      <h3>급변동 알림</h3>
+      <div class="settings-row" style="margin-bottom:14px;">
+        <div class="field"><label for="thresholdInput">이 계단 이상이면 표시</label><input type="number" id="thresholdInput" min="1" value="5"></div>
+        <button class="btn-ghost" onclick="onThresholdChange()">적용</button>
+      </div>
+      <div id="alertList" class="alert-list"></div>
+    </div>
+
+    <div class="card">
+      <h3>체크인 기록</h3>
+      <div id="historyWrap"></div>
+    </div>
+  </div>
+
+  <footer class="hint">이 페이지는 GitHub Actions가 쌓은 데이터를 그대로 보여주는 읽기 전용 화면이에요 · 데이터는 1시간마다 갱신돼요</footer>
+</div>
+
+<script>
+let categories = [];       // config.json의 categories
+let dataByCategory = {};    // slug -> parsed rows[]
+let shotCache = {};         // "slug/item_id_timestamp" -> 존재 여부 확인용 (best-effort)
+let selectedSlug = null;
+let chartRange = '30일';
+let threshold = 5;
+
+const RANGES = ['24시간','7일','30일','3개월','6개월','전체'];
+const RANGE_MS = {'24시간':864e5,'7일':6048e5,'30일':2592e6,'3개월':7776e6,'6개월':15552e6,'전체':Infinity};
+
+function parseTs(tsStr){
+  const m = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/.exec((tsStr||'').trim());
+  if(!m) return new Date(NaN);
+  return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]);
+}
+function fmtTime(d){ return d.toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}); }
+function fmtShort(d, range){
+  if(range==='24시간') return d.toLocaleString('ko-KR',{hour:'2-digit',minute:'2-digit'});
+  return d.toLocaleString('ko-KR',{month:'numeric',day:'numeric'});
+}
+
+async function fetchText(path){
+  const res = await fetch(path + '?t=' + Date.now(), {cache:'no-store'});
+  if(!res.ok) throw new Error(`${path} (${res.status})`);
+  return res.text();
+}
+
+async function loadAll(){
+  document.getElementById('loadingState').style.display = 'block';
+  document.getElementById('errorState').style.display = 'none';
+  document.getElementById('mainContent').style.display = 'none';
+  document.getElementById('updatedText').textContent = '불러오는 중...';
+
+  try{
+    const configText = await fetchText('config.json');
+    const config = JSON.parse(configText);
+    categories = config.categories || [];
+    threshold = config.alert_threshold || 5;
+    document.getElementById('thresholdInput').value = threshold;
+
+    dataByCategory = {};
+    await Promise.all(categories.map(async cat=>{
+      try{
+        const csvText = await fetchText(`rank_log_${cat.slug}.csv`);
+        const parsed = Papa.parse(csvText, {header:true, skipEmptyLines:true});
+        dataByCategory[cat.slug] = parsed.data
+          .map(r=>({...r, _date: parseTs(r.timestamp)}))
+          .filter(r=>!isNaN(r._date) && r.status !== 'not_found')
+          .sort((a,b)=>a._date-b._date);
+      }catch(e){
+        dataByCategory[cat.slug] = [];
+      }
+    }));
+
+    document.getElementById('loadingState').style.display = 'none';
+
+    const hasAnyData = Object.values(dataByCategory).some(rows=>rows.length>0);
+    if(!hasAnyData){
+      document.getElementById('errorState').style.display='block';
+      document.getElementById('errorState').textContent = '아직 쌓인 체크인 데이터가 없어요. GitHub Actions가 처음 실행된 이후부터 데이터가 보여요.';
+      document.getElementById('updatedText').textContent = '데이터 없음';
+      return;
+    }
+
+    document.getElementById('mainContent').style.display = 'block';
+    if(!selectedSlug || !categories.find(c=>c.slug===selectedSlug)){
+      selectedSlug = categories.find(c=>dataByCategory[c.slug]?.length)?.slug || categories[0]?.slug;
+    }
+    document.getElementById('updatedText').textContent = `마지막 새로고침: ${new Date().toLocaleString('ko-KR')}`;
+    render();
+  }catch(e){
+    document.getElementById('loadingState').style.display = 'none';
+    document.getElementById('errorState').style.display = 'block';
+    document.getElementById('errorState').textContent = '데이터를 불러오지 못했어요. GitHub Pages가 아직 배포 중이거나, config.json/CSV 경로를 확인해야 할 수 있어요. (' + e.message + ')';
+    document.getElementById('updatedText').textContent = '불러오기 실패';
+  }
+}
+
+function selectCategory(slug){ selectedSlug = slug; render(); }
+function onThresholdChange(){
+  const v = parseInt(document.getElementById('thresholdInput').value,10);
+  threshold = v && v>0 ? v : 5;
+  render();
+}
+
+function renderTabs(){
+  const bar = document.getElementById('tabbar'); bar.innerHTML='';
+  categories.forEach(c=>{
+    const b=document.createElement('button');
+    b.className='tab'+(c.slug===selectedSlug?' active':'');
+    b.textContent=c.name;
+    b.onclick=()=>selectCategory(c.slug);
+    bar.appendChild(b);
+  });
+}
+
+function currentList(){ return dataByCategory[selectedSlug] || []; }
+
+function computeAlerts(list){
+  const alerts = [];
+  for(let i=1;i<list.length;i++){
+    const delta = parseInt(list[i-1].rank,10) - parseInt(list[i].rank,10);
+    if(Math.abs(delta) >= threshold){
+      alerts.push({ ts:list[i]._date, delta, from:list[i-1].rank, to:list[i].rank });
+    }
+  }
+  return alerts.reverse();
+}
+
+function renderProductCard(list){
+  const meta = categories.find(c=>c.slug===selectedSlug);
+  const latest = list.length ? list[list.length-1] : null;
+
+  document.getElementById('thumbSlot').innerHTML = `<div class="product-thumb-ph">${(latest?.product_name||meta?.name||'?').charAt(0)}</div>`;
+  document.getElementById('productName').textContent = latest ? latest.product_name : (meta ? `${meta.name} 카테고리` : '상품 정보 없음');
+  document.getElementById('productSub').textContent = meta ? `카테고리: ${meta.name}` : '';
+
+  document.getElementById('statCurrent').textContent = latest ? latest.rank+'위' : '–';
+  const deltaSlot = document.getElementById('statCurrentDelta');
+  if(list.length>1){
+    const d = parseInt(list[list.length-2].rank,10) - parseInt(latest.rank,10);
+    deltaSlot.innerHTML = d>0 ? `<span class="stat-delta up">▲${d}</span>` : d<0 ? `<span class="stat-delta down">▼${Math.abs(d)}</span>` : '';
+  } else deltaSlot.innerHTML='';
+
+  if(list.length){
+    const ranks = list.map(r=>parseInt(r.rank,10));
+    document.getElementById('statAvg').textContent = (Math.round((ranks.reduce((a,b)=>a+b,0)/ranks.length)*10)/10)+'위';
+    document.getElementById('statBest').textContent = Math.min(...ranks)+'위';
+    document.getElementById('statWorst').textContent = Math.max(...ranks)+'위';
+  } else {
+    document.getElementById('statAvg').textContent='–';
+    document.getElementById('statBest').textContent='–';
+    document.getElementById('statWorst').textContent='–';
+  }
+}
+
+function renderRangeTabs(){
+  const wrap = document.getElementById('rangeTabs'); wrap.innerHTML='';
+  RANGES.forEach(r=>{
+    const b=document.createElement('button');
+    b.className='range-tab'+(chartRange===r?' active':'');
+    b.textContent=r;
+    b.onclick=()=>{ chartRange=r; render(); };
+    wrap.appendChild(b);
+  });
+}
+
+function renderChart(all){
+  const wrap = document.getElementById('chartWrap');
+  const rangeMs = RANGE_MS[chartRange] ?? RANGE_MS['30일'];
+  const cutoff = Date.now() - rangeMs;
+  const list = isFinite(rangeMs) ? all.filter(c=>c._date.getTime()>=cutoff) : all;
+
+  if(list.length < 2){
+    wrap.innerHTML = `<div class="chart-empty">${all.length<2 ? '체크인이 2건 이상 쌓이면 추이 그래프가 나타나요' : '선택한 기간에는 체크인 기록이 없어요'}</div>`;
+    return;
+  }
+  const W=880,H=220,padL=36,padR=16,padT=16,padB=28;
+  const ranks=list.map(c=>parseInt(c.rank,10));
+  let minR=Math.min(...ranks), maxR=Math.max(...ranks);
+  if(minR===maxR){minR-=1;maxR+=1;}
+  minR=Math.max(1,minR-1); maxR=maxR+1;
+  const x=i=>padL+(i/(list.length-1))*(W-padL-padR);
+  const y=r=>padT+((r-minR)/(maxR-minR))*(H-padT-padB);
+
+  let gridLines='';
+  for(let s=0;s<=4;s++){
+    const ry=padT+(s/4)*(H-padT-padB);
+    const val=Math.round(minR+(s/4)*(maxR-minR));
+    gridLines+=`<line class="chart-grid" x1="${padL}" y1="${ry}" x2="${W-padR}" y2="${ry}"/>`;
+    gridLines+=`<text class="chart-axis-label" x="4" y="${ry+3}">${val}위</text>`;
+  }
+  const points=list.map((c,i)=>`${x(i)},${y(parseInt(c.rank,10))}`).join(' ');
+  const dots=list.map((c,i)=>{
+    const isLast=i===list.length-1;
+    return `<circle class="chart-dot${isLast?' latest':''}" cx="${x(i)}" cy="${y(parseInt(c.rank,10))}" r="${isLast?5:3.5}"><title>${fmtTime(c._date)} · ${c.rank}위</title></circle>`;
+  }).join('');
+  wrap.innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+    ${gridLines}<polyline class="chart-line" points="${points}"/>${dots}
+    <text class="chart-axis-label" x="${padL}" y="${H-6}">${fmtShort(list[0]._date,chartRange)}</text>
+    <text class="chart-axis-label" x="${W-padR}" y="${H-6}" text-anchor="end">${fmtShort(list[list.length-1]._date,chartRange)}</text>
+  </svg>`;
+}
+
+function renderAlerts(list){
+  const alerts = computeAlerts(list);
+  const wrap = document.getElementById('alertList');
+  const banner = document.getElementById('alertBanner');
+  if(!alerts.length){
+    wrap.innerHTML = `<div class="history-empty">아직 기준(${threshold}계단) 이상의 변동이 없어요</div>`;
+    return;
+  }
+  wrap.innerHTML = alerts.slice(0,10).map(a=>{
+    const dir = a.delta>0 ? `🔥 ${a.delta}계단 상승` : `⚠️ ${Math.abs(a.delta)}계단 하락`;
+    return `<div class="alert-item"><span>${dir} (${a.from}위 → ${a.to}위)</span><span class="ts">${fmtTime(a.ts)}</span></div>`;
+  }).join('');
+}
+
+function screenshotUrl(row){
+  if(!row.item_id || !row.timestamp) return null;
+  return `screenshots/${selectedSlug}/${row.item_id}_${row.timestamp}.png`;
+}
+
+function renderHistory(list){
+  const wrap = document.getElementById('historyWrap');
+  if(!list.length){ wrap.innerHTML = `<div class="history-empty">체크인 기록이 없어요</div>`; return; }
+  const reversed = list.slice().reverse();
+  const rowsHtml = reversed.map((r,idx)=>{
+    const origIdx = list.length-1-idx;
+    let deltaTxt='–';
+    let isAlert = false;
+    if(origIdx>0){
+      const d = parseInt(list[origIdx-1].rank,10) - parseInt(r.rank,10);
+      if(d>0) deltaTxt=`<span style="color:var(--accent-up)">▲${d}</span>`;
+      else if(d<0) deltaTxt=`<span style="color:var(--accent-down)">▼${Math.abs(d)}</span>`;
+      isAlert = Math.abs(d) >= threshold;
+    }
+    const shot = screenshotUrl(r);
+    const thumb = shot
+      ? `<img src="${shot}" onerror="this.outerHTML='<span>–</span>'" onclick="window.open('${shot}','_blank')" alt="">`
+      : `<span>–</span>`;
+    return `<tr${isAlert?' class="alert-row"':''}>
+      <td>${fmtTime(r._date)}</td>
+      <td class="rank-cell">${r.rank}위</td>
+      <td class="rank-cell">${deltaTxt}</td>
+      <td class="review-cell">${r.reviews||'–'}</td>
+      <td class="thumb-cell">${thumb}</td>
+    </tr>`;
+  }).join('');
+  wrap.innerHTML = `<table><thead><tr><th>시간</th><th>순위</th><th>변동</th><th>리뷰수</th><th>스크린샷</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
+}
+
+function render(){
+  renderTabs();
+  const list = currentList();
+  renderProductCard(list);
+  renderRangeTabs();
+  renderChart(list);
+  renderAlerts(list);
+  renderHistory(list);
+}
+
+loadAll();
+</script>
+</body>
+</html>
