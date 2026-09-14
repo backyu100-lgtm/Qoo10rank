@@ -75,27 +75,35 @@ def close_overlays(page):
 
 def click_tab(page, label):
     """
-    label과 '정확히' 같은 텍스트를 가진, 화면에 실제로 보이는 요소만 골라서 클릭합니다.
-    (느슨한 부분 일치는 엉뚱한 다른 요소를 클릭할 위험이 있어서 사용하지 않음)
-    디버깅을 위해 후보가 몇 개였는지, 그중 화면에 보이는 게 몇 개였는지 출력합니다.
+    label과 정확히 같은 텍스트를 가진, 화면에 보이는 요소를 찾아 클릭합니다.
+    메인 페이지뿐 아니라 iframe 안까지 전부 뒤져봅니다 (탭 UI가 iframe 안에
+    들어있는 경우가 있어서, 메인 프레임만 보면 후보가 0개로 나올 수 있음).
     """
-    result = page.evaluate(
-        """(label) => {
-            const all = Array.from(document.querySelectorAll('*'));
-            const leaf = all.filter(el => el.children.length === 0 && el.textContent.trim() === label);
-            const visible = leaf.filter(el => el.offsetWidth > 0 && el.offsetHeight > 0);
-            const target = visible[0] || leaf[0];
-            if (target) {
-                target.scrollIntoView({block: 'center'});
-                target.click();
-                return {clicked: true, total: leaf.length, visible: visible.length};
-            }
-            return {clicked: false, total: leaf.length, visible: visible.length};
-        }""",
-        label
-    )
-    print(f"  탭 '{label}' 후보 {result['total']}개 (화면표시 {result['visible']}개) -> 클릭: {result['clicked']}")
-    return result["clicked"]
+    js = """(label) => {
+        const all = Array.from(document.querySelectorAll('*'));
+        const leaf = all.filter(el => el.children.length === 0 && el.textContent.trim() === label);
+        const visible = leaf.filter(el => el.offsetWidth > 0 && el.offsetHeight > 0);
+        const target = visible[0] || leaf[0];
+        if (target) {
+            target.scrollIntoView({block: 'center'});
+            target.click();
+            return {clicked: true, total: leaf.length, visible: visible.length};
+        }
+        return {clicked: false, total: leaf.length, visible: visible.length};
+    }"""
+    print(f"  (페이지 내 프레임 수: {len(page.frames)})")
+    for idx, frame in enumerate(page.frames):
+        try:
+            result = frame.evaluate(js, label)
+        except Exception as e:
+            continue
+        if result["total"] > 0:
+            tag = "메인" if idx == 0 else f"iframe#{idx}"
+            print(f"  탭 '{label}' [{tag}] 후보 {result['total']}개 (화면표시 {result['visible']}개) -> 클릭: {result['clicked']}")
+            if result["clicked"]:
+                return True
+    print(f"  탭 '{label}' 어떤 프레임에서도 후보를 찾지 못했어요")
+    return False
 
 
 def navigate_category(page, category):
@@ -112,17 +120,21 @@ def navigate_category(page, category):
 
 
 def read_current_anchors(page):
-    anchors = page.query_selector_all('a[href*="/item/"], a[href*="goodscode="], a[href*="/g/"]')
-    seen = set()
     out = []
-    for a in anchors:
-        href = a.get_attribute("href") or ""
-        item_id = extract_item_id(href)
-        if not item_id or item_id in seen:
+    for frame in page.frames:
+        try:
+            anchors = frame.query_selector_all('a[href*="/item/"], a[href*="goodscode="], a[href*="/g/"]')
+        except Exception:
             continue
-        seen.add(item_id)
-        title = (a.get_attribute("title") or a.inner_text() or "").strip()
-        out.append((item_id, title, href, a))
+        seen = set()
+        for a in anchors:
+            href = a.get_attribute("href") or ""
+            item_id = extract_item_id(href)
+            if not item_id or item_id in seen:
+                continue
+            seen.add(item_id)
+            title = (a.get_attribute("title") or a.inner_text() or "").strip()
+            out.append((item_id, title, href, a))
     return out
 
 
