@@ -78,12 +78,37 @@ def navigate_category(page, category):
     page.wait_for_timeout(2000)
     close_overlays(page)
     for label in category.get("click_path", []):
-        try:
-            tab = page.get_by_text(label, exact=True)
-            tab.first.click(timeout=5000)
+        clicked = False
+        for exact in [False, True]:
+            try:
+                tab = page.get_by_text(label, exact=exact)
+                if tab.count() > 0:
+                    tab.first.scroll_into_view_if_needed(timeout=3000)
+                    tab.first.click(timeout=5000)
+                    clicked = True
+                    break
+            except Exception:
+                pass
+        if not clicked:
+            # 마지막 수단: 텍스트가 정확히 일치하는 요소를 찾아서 JS로 강제 클릭
+            try:
+                page.evaluate(
+                    """(label) => {
+                        const els = Array.from(document.querySelectorAll('*'))
+                            .filter(el => el.children.length === 0 && el.textContent.trim() === label);
+                        if (els.length) { els[0].click(); return true; }
+                        return false;
+                    }""",
+                    label
+                )
+                clicked = True
+            except Exception as e:
+                print(f"  탭 '{label}' 강제 클릭도 실패: {e}")
+        if clicked:
             page.wait_for_timeout(1800)
-        except Exception as e:
-            print(f"  탭 '{label}' 클릭 실패: {e}")
+        else:
+            print(f"  탭 '{label}' 클릭 완전히 실패했어요 (이 카테고리는 건너뛰어질 수 있음)")
+        close_overlays(page)
     close_overlays(page)
 
 
