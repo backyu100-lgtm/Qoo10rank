@@ -73,41 +73,40 @@ def close_overlays(page):
         pass
 
 
+def click_tab(page, label):
+    """
+    label과 '정확히' 같은 텍스트를 가진, 화면에 실제로 보이는 요소만 골라서 클릭합니다.
+    (느슨한 부분 일치는 엉뚱한 다른 요소를 클릭할 위험이 있어서 사용하지 않음)
+    디버깅을 위해 후보가 몇 개였는지, 그중 화면에 보이는 게 몇 개였는지 출력합니다.
+    """
+    result = page.evaluate(
+        """(label) => {
+            const all = Array.from(document.querySelectorAll('*'));
+            const leaf = all.filter(el => el.children.length === 0 && el.textContent.trim() === label);
+            const visible = leaf.filter(el => el.offsetWidth > 0 && el.offsetHeight > 0);
+            const target = visible[0] || leaf[0];
+            if (target) {
+                target.scrollIntoView({block: 'center'});
+                target.click();
+                return {clicked: true, total: leaf.length, visible: visible.length};
+            }
+            return {clicked: false, total: leaf.length, visible: visible.length};
+        }""",
+        label
+    )
+    print(f"  탭 '{label}' 후보 {result['total']}개 (화면표시 {result['visible']}개) -> 클릭: {result['clicked']}")
+    return result["clicked"]
+
+
 def navigate_category(page, category):
     page.goto(category["url"], wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(2000)
     close_overlays(page)
     for label in category.get("click_path", []):
-        clicked = False
-        for exact in [False, True]:
-            try:
-                tab = page.get_by_text(label, exact=exact)
-                if tab.count() > 0:
-                    tab.first.scroll_into_view_if_needed(timeout=3000)
-                    tab.first.click(timeout=5000)
-                    clicked = True
-                    break
-            except Exception:
-                pass
+        clicked = click_tab(page, label)
         if not clicked:
-            # 마지막 수단: 텍스트가 정확히 일치하는 요소를 찾아서 JS로 강제 클릭
-            try:
-                page.evaluate(
-                    """(label) => {
-                        const els = Array.from(document.querySelectorAll('*'))
-                            .filter(el => el.children.length === 0 && el.textContent.trim() === label);
-                        if (els.length) { els[0].click(); return true; }
-                        return false;
-                    }""",
-                    label
-                )
-                clicked = True
-            except Exception as e:
-                print(f"  탭 '{label}' 강제 클릭도 실패: {e}")
-        if clicked:
-            page.wait_for_timeout(1800)
-        else:
             print(f"  탭 '{label}' 클릭 완전히 실패했어요 (이 카테고리는 건너뛰어질 수 있음)")
+        page.wait_for_timeout(1800)
         close_overlays(page)
     close_overlays(page)
 
