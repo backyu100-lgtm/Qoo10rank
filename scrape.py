@@ -113,8 +113,10 @@ def load_more(page, max_scrolls=50):
         # 개수가 같아도 3번 연속(약 3초)일 때만 "더 이상 없다"고 판단
         if stable_rounds >= 3:
             break
-    page.evaluate("window.scrollTo(0, 0)")
-    page.wait_for_timeout(300)
+    # 주의: 여기서 맨 위로 스크롤을 되돌리면 안 됨.
+    # 큐텐 랭킹 목록은 화면 밖으로 벗어난 상품을 DOM에서 지워버리는(가상 스크롤) 방식이라,
+    # 맨 위로 돌아가는 순간 방금 스크롤해서 로딩한 깊은 순위 상품이 사라져버림.
+    # 그래서 스크롤을 끝낸 "그 위치 그대로" 바로 순위를 읽어야 함.
 
 
 def parse_ranking(page):
@@ -133,6 +135,7 @@ def parse_ranking(page):
         rank += 1
         review_count = None
         el = None
+        true_rank = None
         try:
             container = a.evaluate_handle(
                 "el => el.closest('li') || (el.parentElement && el.parentElement.parentElement)"
@@ -142,9 +145,16 @@ def parse_ranking(page):
             m = re.search(r"\(([\d,]+)\)", text)
             if m:
                 review_count = m.group(1)
+            # 큐텐이 화면에 직접 표시하는 순위 숫자(예: "123", "5 ↑2")를 우선 사용.
+            # 가상 스크롤로 앞쪽 상품이 DOM에서 사라지면 "몇 번째로 발견했는지" 세는 방식은
+            # 틀어질 수 있어서, 화면에 보이는 실제 숫자를 신뢰하는 게 더 정확함.
+            for tok in text.split()[:3]:
+                if tok.isdigit() and 1 <= int(tok) <= 300:
+                    true_rank = int(tok)
+                    break
         except Exception:
             pass
-        items.append({"rank": rank, "item_id": item_id, "title": title, "url": href, "reviews": review_count})
+        items.append({"rank": true_rank or rank, "item_id": item_id, "title": title, "url": href, "reviews": review_count})
         el_by_id[item_id] = el if el else a
     return items, el_by_id
 
