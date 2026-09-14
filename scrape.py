@@ -1,11 +1,12 @@
 """
-Qoo10 재팬 랭킹 자동 추적 스크립트 (카테고리별 분리 저장판)
+Qoo10 재팬 랭킹 자동 추적 스크립트 (타겟 탐색형)
 
-- config.json의 categories에 정의된 탭(総合/ビューティー/スキンケア/基礎化粧品 등)을
-  실제로 클릭해서 이동한 뒤, 그 목록에서 상품을 찾습니다.
-- 카테고리별로 rank_log_<slug>.csv / screenshots/<slug>/ 를 따로 저장합니다.
-- screenshot_retention_days보다 오래된 스크린샷은 실행할 때마다 자동으로 지웁니다.
-- 상품을 못 찾아도 "not_found" 상태로 기록을 남기고, 매번 스크린샷을 남깁니다.
+이전 방식(일단 최대한 다 불러온 뒤에 찾기)은 순위가 깊을 때
+- 스크롤이 부족해서 못 찾거나
+- 가상 스크롤 때문에 앞서 로딩된 상품이 DOM에서 사라지는 문제가 있었음.
+
+이번 버전은 스크롤 한 번 할 때마다 "지금 화면에 타겟 상품이 있는지"를
+바로바로 확인하고, 찾는 즉시 그 자리에서 멈춰서 순위/스크린샷을 확보함.
 """
 import json
 import csv
@@ -25,6 +26,8 @@ MOBILE_VIEWPORT = {"width": 390, "height": 1000}
 MOBILE_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
              "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
 HEADER_OFFSET = 230
+MAX_SCROLLS = 150
+STABLE_ROUNDS_TO_STOP = 4
 
 
 def load_config():
@@ -71,7 +74,6 @@ def close_overlays(page):
 
 
 def navigate_category(page, category):
-    """category의 url로 이동한 뒤, click_path에 있는 탭들을 순서대로 클릭합니다."""
     page.goto(category["url"], wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(2000)
     close_overlays(page)
@@ -85,101 +87,95 @@ def navigate_category(page, category):
     close_overlays(page)
 
 
-def load_more(page, max_scrolls=50):
-    """
-    스크롤하면서 하위 순위 상품까지 최대한 로딩시킵니다.
-    깊은 순위(예: 100위 이상)는 로딩이 느릴 수 있어서, 개수가 안 늘어도
-    바로 포기하지 않고 몇 번 더 기다려본 뒤에 멈춥니다.
-    """
+def read_current_anchors(page):
+    anchors = page.query_selector_all('a[href*="/item/"], a[href*="goodscode="], a[href*="/g/"]')
+    seen = set()
+    out = []
+    for a in anchors:
+        href = a.get_attribute("href") or ""
+        item_id = extract_item_id(href)
+        if not item_id or item_id in seen:
+            continue
+        seen.add(item_id)
+        title = (a.get_attribute("title") or a.inner_text() or "").strip()
+        out.append((item_id, title, href, a))
+    return out
+
+
+def get_container_info(a):
+    rank, reviews, el = None, None, None
+    try:
+        container = a.evaluate_handle(
+            "el => el.closest('li') || (el.parentElement && el.parentElement.parentElement)"
+        )
+        el = container.as_element()
+        text = el.inner_text() if el else ""
+        m = re.search(r"\(([\d,]+)\)", text)
+        if m:
+            reviews = m.group(1)
+        for tok in text.split()[:3]:
+            if tok.isdigit() and 1 <= int(tok) <= 300:
+                rank = int(tok)
+                break
+    except Exception:
+        pass
+    return rank, reviews, el
+
+
+def scroll_step(page):
+    page.mouse.wheel(0, 3000)
+    page.wait_for_timeout(900)
+    for text in ["もっと見る", "More", "もっと", "更に読み込む"]:
+        try:
+            btn = page.get_by_text(text, exact=False)
+            if btn.count() > 0 and btn.first.is_visible():
+                btn.first.click(timeout=1000)
+                page.wait_for_timeout(800)
+        except Exception:
+            pass
+
+
+def find_target(page, target_id, keyword):
     last_count = -1
     stable_rounds = 0
-    for _ in range(max_scrolls):
-        page.mouse.wheel(0, 4000)
-        page.wait_for_timeout(1000)
-        for text in ["もっと見る", "More", "もっと", "更に読み込む"]:
-            try:
-                btn = page.get_by_text(text, exact=False)
-                if btn.count() > 0 and btn.first.is_visible():
-                    btn.first.click(timeout=1000)
-                    page.wait_for_timeout(800)
-            except Exception:
-                pass
-        count = len(page.query_selector_all('a[href*="/item/"], a[href*="goodscode="], a[href*="/g/"]'))
+    total_seen = 0
+
+    for i in range(MAX_SCROLLS):
+        anchors = read_current_anchors(page)
+        total_seen = max(total_seen, len(anchors))
+        for item_id, title, href, a in anchors:
+            id_match = target_id and (item_id == target_id)
+            kw_match = keyword and (keyword in title)
+            if id_match or kw_match:
+                rank, reviews, el = get_container_info(a)
+                return {
+                    "item_id": item_id, "title": title, "url": href,
+                    "rank": rank, "reviews": reviews, "el": el or a
+                }, total_seen
+
+        count = len(anchors)
         if count == last_count:
             stable_rounds += 1
         else:
             stable_rounds = 0
         last_count = count
-        # 개수가 같아도 3번 연속(약 3초)일 때만 "더 이상 없다"고 판단
-        if stable_rounds >= 3:
+        if stable_rounds >= STABLE_ROUNDS_TO_STOP:
             break
-    # 주의: 여기서 맨 위로 스크롤을 되돌리면 안 됨.
-    # 큐텐 랭킹 목록은 화면 밖으로 벗어난 상품을 DOM에서 지워버리는(가상 스크롤) 방식이라,
-    # 맨 위로 돌아가는 순간 방금 스크롤해서 로딩한 깊은 순위 상품이 사라져버림.
-    # 그래서 스크롤을 끝낸 "그 위치 그대로" 바로 순위를 읽어야 함.
+
+        scroll_step(page)
+
+    return None, total_seen
 
 
-def parse_ranking(page):
-    anchors = page.query_selector_all('a[href*="/item/"], a[href*="goodscode="], a[href*="/g/"]')
-    seen_ids = set()
-    items = []
-    el_by_id = {}
-    rank = 0
-    for a in anchors:
-        href = a.get_attribute("href") or ""
-        item_id = extract_item_id(href)
-        if not item_id or item_id in seen_ids:
-            continue
-        title = (a.get_attribute("title") or a.inner_text() or "").strip()
-        seen_ids.add(item_id)
-        rank += 1
-        review_count = None
-        el = None
-        true_rank = None
-        try:
-            container = a.evaluate_handle(
-                "el => el.closest('li') || (el.parentElement && el.parentElement.parentElement)"
-            )
-            el = container.as_element()
-            text = el.inner_text() if el else ""
-            m = re.search(r"\(([\d,]+)\)", text)
-            if m:
-                review_count = m.group(1)
-            # 큐텐이 화면에 직접 표시하는 순위 숫자(예: "123", "5 ↑2")를 우선 사용.
-            # 가상 스크롤로 앞쪽 상품이 DOM에서 사라지면 "몇 번째로 발견했는지" 세는 방식은
-            # 틀어질 수 있어서, 화면에 보이는 실제 숫자를 신뢰하는 게 더 정확함.
-            for tok in text.split()[:3]:
-                if tok.isdigit() and 1 <= int(tok) <= 300:
-                    true_rank = int(tok)
-                    break
-        except Exception:
-            pass
-        items.append({"rank": true_rank or rank, "item_id": item_id, "title": title, "url": href, "reviews": review_count})
-        el_by_id[item_id] = el if el else a
-    return items, el_by_id
-
-
-def find_matches(items, target_id, keyword):
-    matches = []
-    for it in items:
-        id_match = target_id and (it["item_id"] == target_id)
-        kw_match = keyword and (keyword in it["title"])
-        if id_match or kw_match:
-            matches.append(it)
-    return matches
-
-
-def capture_rank_area(page, el_by_id, item_id, shot_path):
-    el = el_by_id.get(item_id)
+def capture_rank_area(page, el, shot_path):
     try:
-        if el:
-            el.scroll_into_view_if_needed(timeout=5000)
-            page.evaluate(
-                "(args) => { const el = args.el; const offset = args.offset;"
-                " const r = el.getBoundingClientRect();"
-                " window.scrollBy(0, r.top - offset); }",
-                {"el": el, "offset": HEADER_OFFSET}
-            )
+        el.scroll_into_view_if_needed(timeout=5000)
+        page.evaluate(
+            "(args) => { const el = args.el; const offset = args.offset;"
+            " const r = el.getBoundingClientRect();"
+            " window.scrollBy(0, r.top - offset); }",
+            {"el": el, "offset": HEADER_OFFSET}
+        )
         page.wait_for_timeout(1200)
         try:
             page.wait_for_load_state("networkidle", timeout=4000)
@@ -272,42 +268,31 @@ def scrape_once(debug=True):
                 print(f"\n[{prod_name}] 카테고리: {cat_name} ({slug})")
 
                 navigate_category(page, category)
-                load_more(page)
-
-                items, el_by_id = parse_ranking(page)
-                print(f"  총 {len(items)}개 상품을 읽었어요.")
+                match, total_seen = find_target(page, target_id, keyword)
 
                 if debug:
                     DEBUG_HTML.write_text(page.content(), encoding="utf-8")
 
-                matches = find_matches(items, target_id, keyword)
-                row = None
+                print(f"  최대 {total_seen}개까지 훑어봤어요.")
 
-                if not matches:
-                    print(f"  상품을 찾지 못했어요.")
-                    if product.get("screenshot", True):
-                        shot_path = shot_dir_for(slug) / f"{target_id or 'unknown'}_{ts}_notfound.png"
-                        try:
-                            page.screenshot(path=str(shot_path), full_page=False)
-                        except Exception as e:
-                            print("스크린샷 저장 실패:", e)
+                if not match:
+                    print("  상품을 찾지 못했어요.")
                     row = [ts, prod_name, target_id, "", "", "", category["url"], "not_found"]
                 else:
-                    m = matches[0]
-                    print(f"  현재 {m['rank']}위 발견! - {m['title'][:40]}")
+                    print(f"  현재 {match['rank']}위 발견! - {match['title'][:40]}")
 
                     if product.get("screenshot", True):
-                        shot_path = shot_dir_for(slug) / f"{m['item_id']}_{ts}.png"
-                        capture_rank_area(page, el_by_id, m["item_id"], shot_path)
+                        shot_path = shot_dir_for(slug) / f"{match['item_id']}_{ts}.png"
+                        capture_rank_area(page, match["el"], shot_path)
 
                     prev = last_found_rank(slug, target_id or prod_name)
-                    if prev and prev.get("rank"):
-                        delta = int(prev["rank"]) - m["rank"]
+                    if prev and prev.get("rank") and match["rank"]:
+                        delta = int(prev["rank"]) - match["rank"]
                         if abs(delta) >= threshold:
                             direction = "상승" if delta > 0 else "하락"
-                            log_alert(f"[{cat_name}] {prod_name}: {abs(delta)}계단 {direction} ({prev['rank']}위 -> {m['rank']}위)")
+                            log_alert(f"[{cat_name}] {prod_name}: {abs(delta)}계단 {direction} ({prev['rank']}위 -> {match['rank']}위)")
 
-                    row = [ts, prod_name, m["item_id"], m["rank"], m["reviews"] or "", m["title"], m["url"], "found"]
+                    row = [ts, prod_name, match["item_id"], match["rank"] or "", match["reviews"] or "", match["title"], match["url"], "found"]
 
                 append_log(slug, [row])
                 cleanup_old_screenshots(slug, retention_days)
