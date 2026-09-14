@@ -79,29 +79,40 @@ def navigate_category(page, category):
         try:
             tab = page.get_by_text(label, exact=True)
             tab.first.click(timeout=5000)
-            page.wait_for_timeout(1200)
+            page.wait_for_timeout(1800)
         except Exception as e:
             print(f"  탭 '{label}' 클릭 실패: {e}")
     close_overlays(page)
 
 
-def load_more(page, max_scrolls=15):
+def load_more(page, max_scrolls=50):
+    """
+    스크롤하면서 하위 순위 상품까지 최대한 로딩시킵니다.
+    깊은 순위(예: 100위 이상)는 로딩이 느릴 수 있어서, 개수가 안 늘어도
+    바로 포기하지 않고 몇 번 더 기다려본 뒤에 멈춥니다.
+    """
     last_count = -1
+    stable_rounds = 0
     for _ in range(max_scrolls):
         page.mouse.wheel(0, 4000)
-        page.wait_for_timeout(600)
-        for text in ["更多", "もっと見る", "More", "もっと"]:
+        page.wait_for_timeout(1000)
+        for text in ["もっと見る", "More", "もっと", "更に読み込む"]:
             try:
                 btn = page.get_by_text(text, exact=False)
                 if btn.count() > 0 and btn.first.is_visible():
                     btn.first.click(timeout=1000)
-                    page.wait_for_timeout(600)
+                    page.wait_for_timeout(800)
             except Exception:
                 pass
         count = len(page.query_selector_all('a[href*="/item/"], a[href*="goodscode="], a[href*="/g/"]'))
         if count == last_count:
-            break
+            stable_rounds += 1
+        else:
+            stable_rounds = 0
         last_count = count
+        # 개수가 같아도 3번 연속(약 3초)일 때만 "더 이상 없다"고 판단
+        if stable_rounds >= 3:
+            break
     page.evaluate("window.scrollTo(0, 0)")
     page.wait_for_timeout(300)
 
@@ -264,6 +275,12 @@ def scrape_once(debug=True):
 
                 if not matches:
                     print(f"  상품을 찾지 못했어요.")
+                    if product.get("screenshot", True):
+                        shot_path = shot_dir_for(slug) / f"{target_id or 'unknown'}_{ts}_notfound.png"
+                        try:
+                            page.screenshot(path=str(shot_path), full_page=False)
+                        except Exception as e:
+                            print("스크린샷 저장 실패:", e)
                     row = [ts, prod_name, target_id, "", "", "", category["url"], "not_found"]
                 else:
                     m = matches[0]
