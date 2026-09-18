@@ -75,31 +75,33 @@ def close_overlays(page):
 
 def click_tab(page, label):
     """
-    label과 정확히 같은 텍스트를 가진, 화면에 보이는 요소를 찾아 클릭합니다.
-    메인 페이지뿐 아니라 iframe 안까지 전부 뒤져봅니다 (탭 UI가 iframe 안에
-    들어있는 경우가 있어서, 메인 프레임만 보면 후보가 0개로 나올 수 있음).
+    label이 '포함된' 텍스트를 가진 요소들 중, 화면에 보이면서 글자 수가 가장 짧은
+    것을 클릭합니다 (진짜 탭 라벨일수록 텍스트가 짧고, 잘못 걸리는 큰 래퍼
+    요소일수록 텍스트가 김 -> 짧은 것 우선으로 오탐을 줄임).
+    메인 페이지와 iframe을 모두 뒤집니다.
     """
     js = """(label) => {
         const all = Array.from(document.querySelectorAll('*'));
-        const leaf = all.filter(el => el.children.length === 0 && el.textContent.trim() === label);
-        const visible = leaf.filter(el => el.offsetWidth > 0 && el.offsetHeight > 0);
-        const target = visible[0] || leaf[0];
+        let candidates = all.filter(el => el.textContent && el.textContent.includes(label));
+        candidates = candidates.filter(el => el.offsetWidth > 0 && el.offsetHeight > 0);
+        candidates.sort((a, b) => a.textContent.trim().length - b.textContent.trim().length);
+        const target = candidates[0];
         if (target) {
             target.scrollIntoView({block: 'center'});
             target.click();
-            return {clicked: true, total: leaf.length, visible: visible.length};
+            return {clicked: true, total: candidates.length, text: target.textContent.trim().slice(0, 30)};
         }
-        return {clicked: false, total: leaf.length, visible: visible.length};
+        return {clicked: false, total: candidates.length, text: ''};
     }"""
     print(f"  (페이지 내 프레임 수: {len(page.frames)})")
     for idx, frame in enumerate(page.frames):
         try:
             result = frame.evaluate(js, label)
-        except Exception as e:
+        except Exception:
             continue
         if result["total"] > 0:
             tag = "메인" if idx == 0 else f"iframe#{idx}"
-            print(f"  탭 '{label}' [{tag}] 후보 {result['total']}개 (화면표시 {result['visible']}개) -> 클릭: {result['clicked']}")
+            print(f"  탭 '{label}' [{tag}] 후보 {result['total']}개, 선택된 텍스트: \"{result['text']}\" -> 클릭: {result['clicked']}")
             if result["clicked"]:
                 return True
     print(f"  탭 '{label}' 어떤 프레임에서도 후보를 찾지 못했어요")
@@ -110,6 +112,9 @@ def navigate_category(page, category):
     page.goto(category["url"], wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(2000)
     close_overlays(page)
+    # 탭 영역이 화면에 실제로 노출되도록 살짝 스크롤 (지연 마운트 대비)
+    page.mouse.wheel(0, 400)
+    page.wait_for_timeout(600)
     for label in category.get("click_path", []):
         clicked = click_tab(page, label)
         if not clicked:
@@ -203,6 +208,25 @@ def find_target(page, target_id, keyword):
     return None, total_seen
 
 
+def wait_images_loaded(page, timeout_ms=6000):
+    """현재 화면에 보이는 이미지들이 실제로 다 로드될 때까지 기다립니다 (빈 회색 박스 방지)."""
+    try:
+        page.wait_for_function(
+            """() => {
+                const imgs = Array.from(document.querySelectorAll('img'));
+                const visible = imgs.filter(i => {
+                    const r = i.getBoundingClientRect();
+                    return r.top < window.innerHeight && r.bottom > 0 && r.width > 0;
+                });
+                if (visible.length === 0) return true;
+                return visible.every(i => i.complete && i.naturalWidth > 0);
+            }""",
+            timeout=timeout_ms
+        )
+    except Exception:
+        pass  # 시간 내에 다 못 끝나도 일단 진행 (완전히 멈추게 하지 않음)
+
+
 def capture_rank_area(page, el, shot_path):
     try:
         el.scroll_into_view_if_needed(timeout=5000)
@@ -212,11 +236,17 @@ def capture_rank_area(page, el, shot_path):
             " window.scrollBy(0, r.top - offset); }",
             {"el": el, "offset": HEADER_OFFSET}
         )
-        page.wait_for_timeout(1200)
+        page.wait_for_timeout(1000)
+        # 살짝 더 스크롤했다가 되돌아오면서 지연 로딩 트리거를 한 번 더 자극
+        page.mouse.wheel(0, 200)
+        page.wait_for_timeout(300)
+        page.mouse.wheel(0, -200)
+        page.wait_for_timeout(500)
         try:
             page.wait_for_load_state("networkidle", timeout=4000)
         except Exception:
             pass
+        wait_images_loaded(page)
         close_overlays(page)
         page.screenshot(path=str(shot_path), full_page=False)
         return True
